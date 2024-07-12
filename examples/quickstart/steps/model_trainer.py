@@ -19,55 +19,97 @@ from typing import Optional
 
 import pandas as pd
 from sklearn.base import ClassifierMixin
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import SGDClassifier
-from typing_extensions import Annotated
 
-from zenml import ArtifactConfig, step
+from zenml import log_artifact_metadata, step
 from zenml.logger import get_logger
+
+from zenml.integrations.neptune.experiment_trackers.run_state import get_neptune_run
 
 logger = get_logger(__name__)
 
 
-@step
-def model_trainer(
+@step(experiment_tracker="neptune_experiment_tracker")
+def model_evaluator(
+    model: ClassifierMixin,
     dataset_trn: pd.DataFrame,
-    model_type: str = "sgd",
+    dataset_tst: pd.DataFrame,
+    min_train_accuracy: float = 0.0,
+    min_test_accuracy: float = 0.0,
     target: Optional[str] = "target",
-) -> Annotated[
-    ClassifierMixin,
-    ArtifactConfig(name="sklearn_classifier", is_model_artifact=True),
-]:
-    """Configure and train a model on the training dataset.
+) -> float:
+    """Evaluate a trained model.
 
-    This is an example of a model training step that takes in a dataset artifact
-    previously loaded and pre-processed by other steps in your pipeline, then
-    configures and trains a model on it. The model is then returned as a step
-    output artifact.
+    This is an example of a model evaluation step that takes in a model artifact
+    previously trained by another step in your pipeline, and a training
+    and validation data set pair which it uses to evaluate the model's
+    performance. The model metrics are then returned as step output artifacts
+    (in this case, the model accuracy on the train and test set).
+
+    The suggested step implementation also outputs some warnings if the model
+    performance does not meet some minimum criteria. This is just an example of
+    how you can use steps to monitor your model performance and alert you if
+    something goes wrong. As an alternative, you can raise an exception in the
+    step to force the pipeline run to fail early and all subsequent steps to
+    be skipped.
+
+    This step is parameterized to configure the step independently of the step code,
+    before running it in a pipeline. In this example, the step can be configured
+    to use different values for the acceptable model performance thresholds and
+    to control whether the pipeline run should fail if the model performance
+    does not meet the minimum criteria. See the documentation for more
+    information:
+
+        https://docs.zenml.io/how-to/build-pipelines/use-pipeline-step-parameters
 
     Args:
-        dataset_trn: The preprocessed train dataset.
-        model_type: The type of model to train.
-        target: The name of the target column in the dataset.
+        model: The pre-trained model artifact.
+        dataset_trn: The train dataset.
+        dataset_tst: The test dataset.
+        min_train_accuracy: Minimal acceptable training accuracy value.
+        min_test_accuracy: Minimal acceptable testing accuracy value.
+        target: Name of target column in dataset.
 
     Returns:
-        The trained model artifact.
-
-    Raises:
-        ValueError: If the model type is not supported.
+        The model accuracy on the test set.
     """
-    # Initialize the model with the hyperparameters indicated in the step
-    # parameters and train it on the training set.
-    if model_type == "sgd":
-        model = SGDClassifier()
-    elif model_type == "rf":
-        model = RandomForestClassifier()
-    else:
-        raise ValueError(f"Unknown model type {model_type}")
-    logger.info(f"Training model {model}...")
+    neptune_run = get_neptune_run()
 
-    model.fit(
+    # Calculate the model accuracy on the train and test set
+    trn_acc = model.score(
         dataset_trn.drop(columns=[target]),
         dataset_trn[target],
     )
-    return model
+    tst_acc = model.score(
+        dataset_tst.drop(columns=[target]),
+        dataset_tst[target],
+    )
+    logger.warning(f"Train accuracy={trn_acc*100:.2f}%")
+    logger.warning(f"Test accuracy={tst_acc*100:.2f}%")
+
+    messages = []
+    if trn_acc < min_train_accuracy:
+        messages.append(
+            f"Train accuracy {trn_acc*100:.2f}% is below {min_train_accuracy*100:.2f}% !"
+        )
+    if tst_acc < min_test_accuracy:
+        messages.append(
+            f"Test accuracy {tst_acc*100:.2f}% is below {min_test_accuracy*100:.2f}% !"
+        )
+    else:
+        for message in messages:
+            logger.warning(message)
+
+    log_artifact_metadata(
+        metadata={
+            "train_accuracy": float(trn_acc),
+            "test_accuracy": float(tst_acc),
+        },
+        artifact_name="sklearn_classifier",
+    )
+
+    neptune_run["model_summary"] = {
+        "train_accuracy": float(trn_acc),
+        "test_accuracy": float(tst_acc),
+    }
+
+    return float(tst_acc)

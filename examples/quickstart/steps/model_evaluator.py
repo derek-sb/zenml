@@ -23,10 +23,12 @@ from sklearn.base import ClassifierMixin
 from zenml import log_artifact_metadata, step
 from zenml.logger import get_logger
 
+from zenml.integrations.neptune.experiment_trackers.run_state import get_neptune_run
+
 logger = get_logger(__name__)
 
 
-@step
+@step(experiment_tracker="neptune_experiment_tracker")
 def model_evaluator(
     model: ClassifierMixin,
     dataset_trn: pd.DataFrame,
@@ -70,6 +72,9 @@ def model_evaluator(
     Returns:
         The model accuracy on the test set.
     """
+    # Get the Neptune run object
+    neptune_run = get_neptune_run()
+
     # Calculate the model accuracy on the train and test set
     trn_acc = model.score(
         dataset_trn.drop(columns=[target]),
@@ -79,8 +84,11 @@ def model_evaluator(
         dataset_tst.drop(columns=[target]),
         dataset_tst[target],
     )
-    logger.info(f"Train accuracy={trn_acc*100:.2f}%")
-    logger.info(f"Test accuracy={tst_acc*100:.2f}%")
+    logger.warning(f"Train accuracy={trn_acc*100:.2f}%")
+    logger.warning(f"Test accuracy={tst_acc*100:.2f}%")
+    neptune_run["metrics/train_accuracy"] = float(trn_acc)
+    neptune_run["metrics/test_accuracy"] = float(tst_acc)
+
 
     messages = []
     if trn_acc < min_train_accuracy:
@@ -102,4 +110,10 @@ def model_evaluator(
         },
         artifact_name="sklearn_classifier",
     )
+    # Log model performance summary
+    neptune_run["model_summary"] = {
+        "train_accuracy": float(trn_acc),
+        "test_accuracy": float(tst_acc),
+    }
+
     return float(tst_acc)

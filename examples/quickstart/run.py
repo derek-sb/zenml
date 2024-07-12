@@ -28,6 +28,12 @@ from pipelines import (
 
 from zenml.client import Client
 from zenml.logger import get_logger
+import neptune
+from zenml.integrations.neptune.experiment_trackers import NeptuneExperimentTracker
+from zenml.integrations.neptune.flavors.neptune_experiment_tracker_flavor import NeptuneExperimentTrackerConfig
+from zenml.enums import StackComponentType
+from datetime import datetime
+from uuid import uuid4
 
 logger = get_logger(__name__)
 
@@ -171,6 +177,11 @@ def main(
 
     # Execute Training Pipeline
     if training_pipeline:
+        # Initialize Neptune run
+        neptune_run = neptune.init_run(
+            project="derek-sb/neptune-derek",
+            api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIyZmRhNjdiYi1kODU5LTQ2YzEtODYxZS02NDU3MGFjMjJiNTgifQ==",
+        )
         run_args_train = {}
 
         # If train_dataset_version_name is specified, use versioned artifacts
@@ -206,14 +217,17 @@ def main(
         logger.info("Training pipeline with SGD finished successfully!\n\n")
 
         # Run the RF pipeline
-        pipeline_args = {}
-        if no_cache:
-            pipeline_args["enable_cache"] = False
-        pipeline_args["config_path"] = os.path.join(
-            config_folder, "training_rf.yaml"
-        )
-        training.with_options(**pipeline_args)(**run_args_train)
-        logger.info("Training pipeline with RF finished successfully!\n\n")
+        # pipeline_args = {}
+        # if no_cache:
+        #     pipeline_args["enable_cache"] = False
+        # pipeline_args["config_path"] = os.path.join(
+        #     config_folder, "training_rf.yaml"
+        # )
+        # training.with_options(**pipeline_args)(**run_args_train)
+        # logger.info("Training pipeline with RF finished successfully!\n\n")
+
+        # Stop the Neptune run
+        neptune_run.stop()
 
     if inference_pipeline:
         run_args_inference = {}
