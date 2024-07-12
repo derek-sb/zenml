@@ -72,7 +72,6 @@ def model_evaluator(
     Returns:
         The model accuracy on the test set.
     """
-    # Get the Neptune run object
     neptune_run = get_neptune_run()
 
     # Calculate the model accuracy on the train and test set
@@ -86,9 +85,6 @@ def model_evaluator(
     )
     logger.warning(f"Train accuracy={trn_acc*100:.2f}%")
     logger.warning(f"Test accuracy={tst_acc*100:.2f}%")
-    neptune_run["metrics/train_accuracy"] = float(trn_acc)
-    neptune_run["metrics/test_accuracy"] = float(tst_acc)
-
 
     messages = []
     if trn_acc < min_train_accuracy:
@@ -110,7 +106,7 @@ def model_evaluator(
         },
         artifact_name="sklearn_classifier",
     )
-    # Log model performance summary
+
     neptune_run["model_summary"] = {
         "train_accuracy": float(trn_acc),
         "test_accuracy": float(tst_acc),

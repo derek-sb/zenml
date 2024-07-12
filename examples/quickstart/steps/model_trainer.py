@@ -19,97 +19,89 @@ from typing import Optional
 
 import pandas as pd
 from sklearn.base import ClassifierMixin
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import SGDClassifier
+from typing_extensions import Annotated
 
-from zenml import log_artifact_metadata, step
+from zenml import ArtifactConfig, step
 from zenml.logger import get_logger
 
 from zenml.integrations.neptune.experiment_trackers.run_state import get_neptune_run
+import numpy as np
+from sklearn.model_selection import train_test_split
 
 logger = get_logger(__name__)
 
-
 @step(experiment_tracker="neptune_experiment_tracker")
-def model_evaluator(
-    model: ClassifierMixin,
+def model_trainer(
     dataset_trn: pd.DataFrame,
-    dataset_tst: pd.DataFrame,
-    min_train_accuracy: float = 0.0,
-    min_test_accuracy: float = 0.0,
+    model_type: str = "sgd",
     target: Optional[str] = "target",
-) -> float:
-    """Evaluate a trained model.
-
-    This is an example of a model evaluation step that takes in a model artifact
-    previously trained by another step in your pipeline, and a training
-    and validation data set pair which it uses to evaluate the model's
-    performance. The model metrics are then returned as step output artifacts
-    (in this case, the model accuracy on the train and test set).
-
-    The suggested step implementation also outputs some warnings if the model
-    performance does not meet some minimum criteria. This is just an example of
-    how you can use steps to monitor your model performance and alert you if
-    something goes wrong. As an alternative, you can raise an exception in the
-    step to force the pipeline run to fail early and all subsequent steps to
-    be skipped.
-
-    This step is parameterized to configure the step independently of the step code,
-    before running it in a pipeline. In this example, the step can be configured
-    to use different values for the acceptable model performance thresholds and
-    to control whether the pipeline run should fail if the model performance
-    does not meet the minimum criteria. See the documentation for more
-    information:
-
-        https://docs.zenml.io/how-to/build-pipelines/use-pipeline-step-parameters
-
-    Args:
-        model: The pre-trained model artifact.
-        dataset_trn: The train dataset.
-        dataset_tst: The test dataset.
-        min_train_accuracy: Minimal acceptable training accuracy value.
-        min_test_accuracy: Minimal acceptable testing accuracy value.
-        target: Name of target column in dataset.
-
-    Returns:
-        The model accuracy on the test set.
-    """
+    max_iter: int = 1000,
+    tol: float = 1e-3,
+    validation_fraction: float = 0.1
+) -> Annotated[
+    ClassifierMixin,
+    ArtifactConfig(name="sklearn_classifier", is_model_artifact=True),
+]:
     neptune_run = get_neptune_run()
+    
+    X = dataset_trn.drop(columns=[target])
+    y = dataset_trn[target]
 
-    # Calculate the model accuracy on the train and test set
-    trn_acc = model.score(
-        dataset_trn.drop(columns=[target]),
-        dataset_trn[target],
-    )
-    tst_acc = model.score(
-        dataset_tst.drop(columns=[target]),
-        dataset_tst[target],
-    )
-    logger.warning(f"Train accuracy={trn_acc*100:.2f}%")
-    logger.warning(f"Test accuracy={tst_acc*100:.2f}%")
+    if model_type == "sgd":
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=validation_fraction, random_state=42)
 
-    messages = []
-    if trn_acc < min_train_accuracy:
-        messages.append(
-            f"Train accuracy {trn_acc*100:.2f}% is below {min_train_accuracy*100:.2f}% !"
+        model = SGDClassifier(
+            max_iter=1,
+            tol=tol,
+            random_state=42
         )
-    if tst_acc < min_test_accuracy:
-        messages.append(
-            f"Test accuracy {tst_acc*100:.2f}% is below {min_test_accuracy*100:.2f}% !"
+        
+        train_scores = []
+        val_scores = []
+
+        for epoch in range(max_iter):
+            model.partial_fit(X_train, y_train, classes=np.unique(y))
+            
+            train_score = model.score(X_train, y_train)
+            val_score = model.score(X_val, y_val)
+            
+            train_scores.append(train_score)
+            val_scores.append(val_score)
+            
+            neptune_run[f"metrics/train_score/epoch_{epoch}"] = train_score
+            neptune_run[f"metrics/val_score/epoch_{epoch}"] = val_score
+            neptune_run["metrics/train_accuracy"].append(train_score) 
+            neptune_run["metrics/val_accuracy"].append(val_score) 
+
+            # Check for early stopping
+            if epoch > 5 and np.mean(val_scores[-5:]) < np.mean(val_scores[-6:-1]) - tol:
+                logger.info(f"Early stopping at epoch {epoch}")
+                break
+        
+        logger.info(f"SGD training completed after {epoch + 1} iterations")
+        logger.info(f"Final training score: {train_scores[-1]}")
+        logger.info(f"Final validation score: {val_scores[-1]}")
+
+        # Log final scores
+        neptune_run["metrics/final_train_score"] = train_scores[-1]
+        neptune_run["metrics/final_val_score"] = val_scores[-1]
+
+
+        # model = SGDClassifier()
+    elif model_type == "rf":
+        model = RandomForestClassifier()
+        model.fit(
+            dataset_trn.drop(columns=[target]),
+            dataset_trn[target],
         )
     else:
-        for message in messages:
-            logger.warning(message)
+        raise ValueError(f"Unknown model type {model_type}")
+    logger.info(f"Training model {model}...")
 
-    log_artifact_metadata(
-        metadata={
-            "train_accuracy": float(trn_acc),
-            "test_accuracy": float(tst_acc),
-        },
-        artifact_name="sklearn_classifier",
-    )
-
-    neptune_run["model_summary"] = {
-        "train_accuracy": float(trn_acc),
-        "test_accuracy": float(tst_acc),
-    }
-
-    return float(tst_acc)
+    # model.fit(
+    #     dataset_trn.drop(columns=[target]),
+    #     dataset_trn[target],
+    # )
+    return model

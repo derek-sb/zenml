@@ -145,6 +145,11 @@ def main(
         inference_pipeline: Whether to run the pipeline that performs inference.
         no_cache: If `True` cache will be disabled.
     """
+    # Initialize Neptune run
+    neptune_run = neptune.init_run(
+        project="derek-sb/neptune-derek",
+        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIyZmRhNjdiYi1kODU5LTQ2YzEtODYxZS02NDU3MGFjMjJiNTgifQ==",
+    )
     client = Client()
 
     config_folder = os.path.join(
@@ -177,11 +182,6 @@ def main(
 
     # Execute Training Pipeline
     if training_pipeline:
-        # Initialize Neptune run
-        neptune_run = neptune.init_run(
-            project="derek-sb/neptune-derek",
-            api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIyZmRhNjdiYi1kODU5LTQ2YzEtODYxZS02NDU3MGFjMjJiNTgifQ==",
-        )
         run_args_train = {}
 
         # If train_dataset_version_name is specified, use versioned artifacts
